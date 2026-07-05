@@ -1,0 +1,9 @@
+This is a sample document for testing the RAG pipeline.
+
+It contains multiple paragraphs to demonstrate chunking behavior.
+
+The quick brown fox jumps over the lazy dog. This sentence is here to provide more content for the embedding model to process.
+
+Machine learning is a subset of artificial intelligence that enables systems to learn from data. RAG stands for Retrieval-Augmented Generation.
+
+In production systems, chunking strategy directly impacts retrieval accuracy. Smaller chunks improve precision but may lose context. Larger chunks preserve context but introduce noise.
