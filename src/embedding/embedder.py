@@ -1,19 +1,4 @@
-"""
-src/embedding/embedder.py
-Bi-encoder embedding engine using sentence-transformers.
 
-Design decisions:
-- We wrap sentence-transformers directly to demonstrate ownership of the
-  embedding lifecycle: device selection, batching, normalization, and caching.
-- Device priority: CUDA > MPS (Apple Silicon) > CPU. This is auto-detected
-  but can be overridden via EMBEDDING_DEVICE env var.
-- Embeddings are L2-normalized so cosine similarity = dot product,
-  which is faster and avoids numerical instability.
-- Batch processing prevents GPU OOM on large document sets and keeps
-  CPU cores saturated.
-- The model is loaded once at Embedder initialization and cached for the
-  process lifetime. This is critical for API server performance.
-"""
 
 import os
 from typing import List
@@ -54,7 +39,7 @@ class Embedder:
         self._model = SentenceTransformer(self.model_name, device=self.device)
 
         # Cache the embedding dimension for downstream validation
-        self.embedding_dim = self._model.get_sentence_embedding_dimension()
+        self.embedding_dim = self._model.get_embedding_dimension()
         logger.info(
             "Embedding model ready | dim={} | model={}",
             self.embedding_dim,
