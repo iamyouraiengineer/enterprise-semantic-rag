@@ -1,4 +1,11 @@
+"""
+scripts/query_db.py
+CLI entrypoint for querying with hybrid search + re-ranking.
 
+Usage:
+    python scripts/query_db.py "your search query"
+    python scripts/query_db.py "machine learning" --mode hybrid --rerank
+"""
 
 import argparse
 import json
@@ -7,20 +14,26 @@ from config.log_config import configure_logging
 from src.embedding.embedder import Embedder
 from src.retrieval.vector_store import VectorStore
 from src.retrieval.hybrid_search import HybridSearchEngine
+from src.retrieval.reranker import CrossEncoderReranker
 
 
 def main() -> None:
     configure_logging()
 
-    parser = argparse.ArgumentParser(description="Query the vector store")
+    parser = argparse.ArgumentParser(description="Query the RAG engine")
     parser.add_argument("query", type=str, help="Search query text")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of results")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of final results")
     parser.add_argument(
         "--mode",
         type=str,
         choices=["dense", "sparse", "hybrid"],
         default="hybrid",
-        help="Search mode: dense (vector only), sparse (BM25 only), hybrid (RRF fusion)",
+        help="Search mode",
+    )
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Apply cross-encoder re-ranking to hybrid results",
     )
     parser.add_argument(
         "--filter", type=str, default=None, help="Metadata filter JSON"
@@ -30,24 +43,13 @@ def main() -> None:
     embedder = Embedder()
     store = VectorStore()
     engine = HybridSearchEngine(vector_store=store)
-
-    # Build BM25 index from current store contents
-    # In production, this would be cached and incrementally updated
-    count = store.count()
-    if count > 0 and args.mode in ("sparse", "hybrid"):
-        # Reconstruct corpus from store for BM25 indexing
-        # This is a simplification; production would maintain a parallel index
-        logger.info("Building BM25 index from {} stored documents", count)
-        # Note: For the CLI script we skip full BM25 rebuild and rely on dense
-        # because reconstructing from ChromaDB requires get() with all IDs.
-        # The hybrid engine is fully tested in the test suite.
-        pass
+    reranker = CrossEncoderReranker() if args.rerank else None
 
     where = None
     if args.filter:
         where = json.loads(args.filter)
 
-    print(f"\nQuery: '{args.query}' | Mode: {args.mode}\n")
+    print(f"\nQuery: '{args.query}' | Mode: {args.mode} | Rerank: {args.rerank}\n")
 
     if args.mode == "dense":
         query_emb = embedder.embed_single(args.query).tolist()
@@ -64,17 +66,20 @@ def main() -> None:
             where=where,
         )
 
+    # Apply re-ranking if requested
+    if reranker and results:
+        results = reranker.rerank(args.query, results, top_k=args.top_k)
+
     print(f"Results: {len(results)}\n")
     for i, r in enumerate(results, 1):
         print(f"--- Result {i} ---")
         print(f"ID: {r['id']}")
         if "rrf_score" in r:
             print(f"RRF Score: {r['rrf_score']:.4f}")
+        if "rerank_score" in r:
+            print(f"Re-rank Score: {r['rerank_score']:.4f}")
+        if "sources" in r:
             print(f"Sources: {r['sources']}")
-        if "distance" in r:
-            print(f"Distance: {r['distance']:.4f}")
-        if "score" in r:
-            print(f"BM25 Score: {r['score']:.4f}")
         print(f"Metadata: {r['metadata']}")
         print(f"Text: {r['text'][:300]}...")
         print()
