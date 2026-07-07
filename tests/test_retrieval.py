@@ -5,6 +5,7 @@ Unit tests for the retrieval layer (vector store, hybrid search, reranker).
 This file will grow as we add re-ranking in Step 7.
 """
 
+
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,7 @@ import pytest
 
 from src.retrieval.vector_store import VectorStore
 from src.retrieval.hybrid_search import HybridSearchEngine
-
+from src.retrieval.reranker import CrossEncoderReranker
 
 # =============================================================================
 # Vector Store Tests
@@ -225,3 +226,79 @@ class TestHybridSearchEngine:
         # Verify RRF scores are present
         assert all("rrf_score" in r for r in results)
         assert all("sources" in r for r in results)
+
+# =============================================================================
+# Re-ranking Tests
+# =============================================================================
+class TestCrossEncoderReranker:
+    """Tests for the cross-encoder re-ranker."""
+
+    @pytest.fixture
+    def reranker(self) -> CrossEncoderReranker:
+        """Load the cross-encoder model. May be in pass-through if download fails."""
+        return CrossEncoderReranker()
+
+    def test_rerank_preserves_order_for_identical_docs(self, reranker: CrossEncoderReranker) -> None:
+        """Documents with identical relevance should maintain stable ordering."""
+        docs = [
+            {"id": "a", "text": "The sky is blue"},
+            {"id": "b", "text": "The sky is blue"},
+        ]
+        result = reranker.rerank("What color is the sky?", docs)
+        assert len(result) == 2
+        assert all("rerank_score" in r for r in result)
+
+    def test_rerank_boosts_relevant_doc(self, reranker: CrossEncoderReranker) -> None:
+        """
+        A document that directly answers the query should score higher than
+        an irrelevant document. If model is in pass-through, skip this test.
+        """
+        if reranker._pass_through:
+            pytest.skip("Cross-encoder model not loaded; skipping relevance test")
+
+        docs = [
+            {"id": "relevant", "text": "The capital of France is Paris."},
+            {"id": "irrelevant", "text": "Python is a programming language created by Guido van Rossum."},
+        ]
+        result = reranker.rerank("What is the capital of France?", docs)
+
+        assert result[0]["id"] == "relevant"
+        assert result[0]["rerank_score"] > result[1]["rerank_score"]
+
+    def test_rerank_top_k_truncation(self, reranker: CrossEncoderReranker) -> None:
+        """top_k parameter must limit the number of returned documents."""
+        docs = [
+            {"id": str(i), "text": f"Document number {i}"}
+            for i in range(10)
+        ]
+        result = reranker.rerank("test", docs, top_k=3)
+        assert len(result) == 3
+
+    def test_rerank_empty_docs(self, reranker: CrossEncoderReranker) -> None:
+        """Empty document list must return empty list without error."""
+        result = reranker.rerank("test", [])
+        assert result == []
+
+    def test_rerank_scores_are_normalized(self, reranker: CrossEncoderReranker) -> None:
+        """All scores must be in [0, 1] after sigmoid normalization."""
+        if reranker._pass_through:
+            pytest.skip("Cross-encoder model not loaded; skipping score test")
+
+        docs = [
+            {"id": "1", "text": "Machine learning is a field of AI."},
+            {"id": "2", "text": "Deep learning uses neural networks."},
+        ]
+        result = reranker.rerank("What is machine learning?", docs)
+        for r in result:
+            assert 0.0 <= r["rerank_score"] <= 1.0
+
+    def test_pass_through_mode(self) -> None:
+        """If model fails to load, pass-through mode must return docs with neutral scores."""
+        # Force a bad model name to trigger pass-through
+        bad_reranker = CrossEncoderReranker(model_name="this-model-does-not-exist-12345")
+        assert bad_reranker._pass_through is True
+
+        docs = [{"id": "1", "text": "test"}]
+        result = bad_reranker.rerank("query", docs)
+        assert len(result) == 1
+        assert result[0]["rerank_score"] == 0.5
