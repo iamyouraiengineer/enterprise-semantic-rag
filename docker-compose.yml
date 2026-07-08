@@ -1,0 +1,61 @@
+# =============================================================================
+# Full stack: API + optional UI
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ------------------------------------------------------------------
+  # FastAPI Backend
+  # ------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - huggingface-cache:/app/.cache/huggingface
+    environment:
+      - VECTOR_STORE_PATH=/app/data/vector_store
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------
+  # Streamlit UI (optional — comment out if you only want the API)
+  # ------------------------------------------------------------------
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-ui
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - API_BASE_URL=http://rag-api:8000
+    command: ["python", "-m", "streamlit", "run", "ui/app_ui.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ------------------------------------------------------------------
+# Named volumes
+# ------------------------------------------------------------------
+volumes:
+  huggingface-cache:
+    driver: local
